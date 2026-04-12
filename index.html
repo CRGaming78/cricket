@@ -28,6 +28,19 @@
         body { background-color: #0d1117; color: #c9d1d9; font-family: 'Courier New', Courier, monospace; }
         .no-scrollbar::-webkit-scrollbar { display: none; }
         .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+
+        @keyframes pop {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.1); color: #ffeb3b; }
+            100% { transform: scale(1); }
+        }
+        @keyframes shake {
+            0%, 100% { transform: translateX(0); }
+            25% { transform: translateX(-5px); color: #ff4c4c; }
+            75% { transform: translateX(5px); color: #ff4c4c; }
+        }
+        .anim-pop { animation: pop 0.5s ease-in-out; }
+        .anim-shake { animation: shake 0.4s ease-in-out; }
     </style>
 </head>
 <body class="p-4 sm:p-6 bg-darkBg text-gray-300 min-h-screen">
@@ -48,9 +61,9 @@
         </div>
 
         <!-- Main Scoreboard -->
-        <div class="bg-cardBg border border-borderCol rounded-xl p-5 text-center shadow-lg">
+        <div class="bg-cardBg border border-borderCol rounded-xl p-5 text-center shadow-lg transition-all duration-300" id="mainScoreBox">
             <div class="text-gray-400 text-sm font-semibold tracking-wider mb-2">TOTAL SCORE</div>
-            <div class="text-5xl font-bold text-runColor mb-4">
+            <div class="text-5xl font-bold text-runColor mb-4" id="scoreText">
                 <span id="runs">0</span> <span class="text-3xl text-gray-500 font-normal">/</span> <span id="wickets">0</span>
             </div>
             <div class="text-lg font-medium text-gray-300">
@@ -82,13 +95,38 @@
                 <div class="flex justify-between text-xs mt-2">
                     <div class="text-center"><div class="text-gray-400">O</div><div id="bowlerOvers" class="font-bold text-white text-sm mt-1">0.0</div></div>
                     <div class="text-center"><div class="text-gray-400">R</div><div id="bowlerRuns" class="font-bold text-white text-sm mt-1">0</div></div>
-                    <div class="text-center"><div class="text-gray-400">W</div><div id="bowlerWickets" class="font-bold text-white text-sm mt-1">0</div></div>
+                    <div class="text-center"><div class="text-center text-gray-400">W</div><div id="bowlerWickets" class="font-bold text-white text-sm mt-1">0</div></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Full Scorecard (Batters & Bowlers) -->
+        <div class="bg-cardBg border border-borderCol rounded-lg p-4">
+            <h3 class="text-gray-400 text-sm font-semibold mb-3 border-b border-borderCol pb-2"><i class="fas fa-clipboard-list mr-2"></i>Scorecard</h3>
+
+            <div class="mb-4">
+                <h4 class="text-xs font-bold text-gray-500 mb-2 uppercase">Batters</h4>
+                <div class="space-y-1 text-sm" id="fullBattersList">
+                    <!-- Batters injected here -->
+                </div>
+            </div>
+
+            <div>
+                <h4 class="text-xs font-bold text-gray-500 mb-2 uppercase">Bowlers</h4>
+                <div class="space-y-1 text-sm" id="fullBowlersList">
+                    <!-- Bowlers injected here -->
                 </div>
             </div>
         </div>
 
         <!-- Admin Control Panel -->
         <div id="adminPanel" class="hidden space-y-4">
+
+            <!-- Undo / End Match -->
+            <div class="grid grid-cols-2 gap-2">
+                <button onclick="confirmAction('undo', 'Are you sure you want to undo the last action?')" class="bg-gray-800 hover:bg-gray-700 text-gray-300 py-2 rounded font-bold text-xs shadow transition border border-gray-600"><i class="fas fa-undo mr-1"></i>Undo Last</button>
+                <button onclick="confirmAction('end_match', 'Are you sure you want to end this match and start a new one?')" class="bg-red-900 hover:bg-red-800 text-white py-2 rounded font-bold text-xs shadow transition border border-red-700"><i class="fas fa-power-off mr-1"></i>End Match</button>
+            </div>
 
             <!-- Player Management -->
             <div class="bg-[#010409] border border-borderCol rounded-lg p-3 space-y-3">
@@ -137,14 +175,65 @@
         const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
         let currentPin = ""; 
 
+        let lastRuns = 0;
+        let lastWickets = 0;
+
         // Helper to format overs
         function formatOvers(balls) {
             return `${Math.floor(balls / 6)}.${balls % 6}`;
         }
 
+        // Helper to play sounds safely
+        function playSound(type) {
+            try {
+                // Short synthesized beep so we don't need external audio files
+                const ctx = new (window.AudioContext || window.webkitAudioContext)();
+                const osc = ctx.createOscillator();
+                const gain = ctx.createGain();
+                osc.connect(gain);
+                gain.connect(ctx.destination);
+
+                if (type === 'boundary') {
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(400, ctx.currentTime);
+                    osc.frequency.exponentialRampToValueAtTime(800, ctx.currentTime + 0.1);
+                    gain.gain.setValueAtTime(0.3, ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+                    osc.start(ctx.currentTime);
+                    osc.stop(ctx.currentTime + 0.5);
+                } else if (type === 'wicket') {
+                    osc.type = 'sawtooth';
+                    osc.frequency.setValueAtTime(150, ctx.currentTime);
+                    osc.frequency.exponentialRampToValueAtTime(40, ctx.currentTime + 0.3);
+                    gain.gain.setValueAtTime(0.4, ctx.currentTime);
+                    gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.5);
+                    osc.start(ctx.currentTime);
+                    osc.stop(ctx.currentTime + 0.5);
+                }
+            } catch (e) {
+                // AudioContext not supported or blocked by browser autoplay rules
+            }
+        }
+
         ws.onmessage = function(event) {
             const state = JSON.parse(event.data);
             
+            // Animations Logic
+            const scoreText = document.getElementById('scoreText');
+            scoreText.classList.remove('anim-pop', 'anim-shake');
+            void scoreText.offsetWidth; // trigger reflow
+
+            if (state.wickets > lastWickets) {
+                scoreText.classList.add('anim-shake');
+                playSound('wicket');
+            } else if (state.runs > lastRuns && (state.runs - lastRuns) >= 4) {
+                scoreText.classList.add('anim-pop');
+                playSound('boundary');
+            }
+
+            lastRuns = state.runs;
+            lastWickets = state.wickets;
+
             if (state.type === "error") {
                 alert(state.message);
                 logoutAdmin();
@@ -172,6 +261,41 @@
             document.getElementById('bowlerOvers').innerText = formatOvers(bwStats.balls);
             document.getElementById('bowlerRuns').innerText = bwStats.runs;
             document.getElementById('bowlerWickets').innerText = bwStats.wickets;
+
+            // Full Scorecard
+            const battersList = document.getElementById('fullBattersList');
+            battersList.innerHTML = '';
+            for (const [bName, s] of Object.entries(state.batter_stats)) {
+                const isActive = bName === state.striker;
+                const activeStar = isActive ? '<span class="text-green-500 text-xs ml-1"><i class="fas fa-caret-left"></i></span>' : '';
+                const styleClass = isActive ? 'text-white font-bold' : 'text-gray-400';
+
+                battersList.innerHTML += `
+                    <div class="flex justify-between ${styleClass}">
+                        <div class="w-1/2">${bName}${activeStar}</div>
+                        <div class="w-1/6 text-right">${s.runs}</div>
+                        <div class="w-1/6 text-right">${s.balls}</div>
+                        <div class="w-1/6 text-right text-gray-500">${s.fours}</div>
+                    </div>
+                `;
+            }
+
+            const bowlersList = document.getElementById('fullBowlersList');
+            bowlersList.innerHTML = '';
+            for (const [bName, s] of Object.entries(state.bowler_stats)) {
+                const isActive = bName === state.bowler;
+                const activeStar = isActive ? '<span class="text-green-500 text-xs ml-1"><i class="fas fa-caret-left"></i></span>' : '';
+                const styleClass = isActive ? 'text-white font-bold' : 'text-gray-400';
+
+                bowlersList.innerHTML += `
+                    <div class="flex justify-between ${styleClass}">
+                        <div class="w-1/2">${bName}${activeStar}</div>
+                        <div class="w-1/6 text-right">${formatOvers(s.balls)}</div>
+                        <div class="w-1/6 text-right">${s.runs}</div>
+                        <div class="w-1/6 text-right">${s.wickets}</div>
+                    </div>
+                `;
+            }
 
             // Match Log
             const logContainer = document.getElementById('matchLog');
@@ -210,6 +334,12 @@
             document.getElementById('loginSection').classList.remove('hidden');
             document.getElementById('loggedInStatus').classList.add('hidden');
             document.getElementById('adminPanel').classList.add('hidden');
+        }
+
+        function confirmAction(actionType, message) {
+            if(confirm(message)) {
+                sendAction(actionType);
+            }
         }
 
         function sendAction(actionType) {

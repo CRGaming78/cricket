@@ -12,35 +12,76 @@ DB_FILE = "gully_cricket.db"
 def init_db():
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
+
+    # Check if event_log exists to handle migrations
+    cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='event_log'")
+    table_exists = cursor.fetchone()
+
+    if table_exists:
+        # Check if the required columns exist
+        cursor.execute("PRAGMA table_info(event_log)")
+        columns = [col[1] for col in cursor.fetchall()]
+
+        if 'bowler' not in columns:
+            cursor.execute("ALTER TABLE event_log ADD COLUMN bowler TEXT DEFAULT 'b1'")
+        if 'match_id' not in columns:
+            cursor.execute("ALTER TABLE event_log ADD COLUMN match_id INTEGER DEFAULT 1")
+    else:
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS event_log (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                match_id INTEGER,
+                event_type TEXT,
+                runs_added INTEGER,
+                is_legal_ball BOOLEAN,
+                batter TEXT,
+                bowler TEXT,
+                description TEXT,
+                FOREIGN KEY (match_id) REFERENCES matches (id)
+            )
+        ''')
+
     cursor.execute('''
-        CREATE TABLE IF NOT EXISTS event_log (
+        CREATE TABLE IF NOT EXISTS matches (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            event_type TEXT,
-            runs_added INTEGER,
-            is_legal_ball BOOLEAN,
-            batter TEXT,
-            bowler TEXT,
-            description TEXT
+            status TEXT DEFAULT 'active'
         )
     ''')
+
+    # Create an initial match if none exists
+    cursor.execute("SELECT id FROM matches WHERE status='active' ORDER BY id DESC LIMIT 1")
+    if not cursor.fetchone():
+        cursor.execute("INSERT INTO matches (status) VALUES ('active')")
+
     conn.commit()
     conn.close()
 
 init_db()
 
-game_state = {
-    "runs": 0, "wickets": 0, "balls": 0,
-    "striker": "p1",
-    "bowler": "b1",
-    "next_player_index": 2,
-    "logs": [],
-    "batter_stats": {
-        "p1": {"runs": 0, "balls": 0, "fours": 0}
-    },
-    "bowler_stats": {
-        "b1": {"balls": 0, "runs": 0, "wickets": 0}
+def get_current_match_id():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM matches WHERE status='active' ORDER BY id DESC LIMIT 1")
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else None
+
+def get_default_state():
+    return {
+        "runs": 0, "wickets": 0, "balls": 0,
+        "striker": "p1",
+        "bowler": "b1",
+        "next_player_index": 2,
+        "logs": [],
+        "batter_stats": {
+            "p1": {"runs": 0, "balls": 0, "fours": 0}
+        },
+        "bowler_stats": {
+            "b1": {"balls": 0, "runs": 0, "wickets": 0}
+        }
     }
-}
+
+game_state = get_default_state()
 
 def ensure_player_stats(batter, bowler):
     if batter not in game_state["batter_stats"]:
@@ -66,12 +107,82 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+def rebuild_state():
+    global game_state
+    game_state = get_default_state()
+    match_id = get_current_match_id()
+    if not match_id:
+        return
+
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT event_type, runs_added, is_legal_ball, batter, bowler, description FROM event_log WHERE match_id=? ORDER BY id ASC", (match_id,))
+    events = cursor.fetchall()
+    conn.close()
+
+    for event in events:
+        evt_type, runs, is_legal, evt_batter, evt_bowler, desc = event
+
+        ensure_player_stats(evt_batter, evt_bowler)
+
+        if evt_type == "rename_batter":
+            # evt_batter is the NEW name in the event log for rename
+            # We have to figure out the old name currently batting
+            current_striker = game_state["striker"]
+            stats = game_state["batter_stats"].pop(current_striker, {"runs": 0, "balls": 0, "fours": 0})
+            game_state["batter_stats"][evt_batter] = stats
+            game_state["striker"] = evt_batter
+        elif evt_type == "change_bowler":
+            game_state["bowler"] = evt_bowler
+            ensure_player_stats(evt_batter, evt_bowler)
+        elif evt_type == "dot":
+            game_state["balls"] += 1
+            game_state["batter_stats"][evt_batter]["balls"] += 1
+            game_state["bowler_stats"][evt_bowler]["balls"] += 1
+        elif evt_type == "run":
+            game_state["runs"] += runs
+            game_state["balls"] += 1
+            game_state["batter_stats"][evt_batter]["runs"] += runs
+            game_state["batter_stats"][evt_batter]["balls"] += 1
+            if runs == 4:
+                game_state["batter_stats"][evt_batter]["fours"] += 1
+            game_state["bowler_stats"][evt_bowler]["runs"] += runs
+            game_state["bowler_stats"][evt_bowler]["balls"] += 1
+        elif evt_type == "no_ball":
+            game_state["runs"] += 1
+            game_state["bowler_stats"][evt_bowler]["runs"] += 1
+        elif evt_type == "no_ball_hit":
+            game_state["runs"] += 2
+            game_state["batter_stats"][evt_batter]["runs"] += 1
+            game_state["bowler_stats"][evt_bowler]["runs"] += 2
+        elif evt_type == "2nd_bounce":
+            game_state["runs"] += 1
+            game_state["bowler_stats"][evt_bowler]["runs"] += 1
+        elif evt_type == "wicket":
+            game_state["wickets"] += 1
+            game_state["balls"] += 1
+            game_state["batter_stats"][evt_batter]["balls"] += 1
+            game_state["bowler_stats"][evt_bowler]["balls"] += 1
+            game_state["bowler_stats"][evt_bowler]["wickets"] += 1
+            next_player = f"p{game_state['next_player_index']}"
+            game_state["striker"] = next_player
+            game_state["next_player_index"] += 1
+            ensure_player_stats(next_player, evt_bowler)
+
+        # Logs handling (keep last 10)
+        game_state["logs"].insert(0, desc)
+        if len(game_state["logs"]) > 10:
+            game_state["logs"].pop()
+
+rebuild_state()
+
 def log_event_to_db(event_type, runs_added, is_legal_ball, batter, bowler, description):
+    match_id = get_current_match_id()
     conn = sqlite3.connect(DB_FILE)
     cursor = conn.cursor()
     cursor.execute(
-        "INSERT INTO event_log (event_type, runs_added, is_legal_ball, batter, bowler, description) VALUES (?, ?, ?, ?, ?, ?)",
-        (event_type, runs_added, is_legal_ball, batter, bowler, description)
+        "INSERT INTO event_log (match_id, event_type, runs_added, is_legal_ball, batter, bowler, description) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (match_id, event_type, runs_added, is_legal_ball, batter, bowler, description)
     )
     conn.commit()
     conn.close()
@@ -84,6 +195,31 @@ def process_action(action_data):
     action = action_data.get("action")
     batter = game_state["striker"]
     bowler = game_state["bowler"]
+
+    if action == "end_match":
+        match_id = get_current_match_id()
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        if match_id:
+            cursor.execute("UPDATE matches SET status='completed' WHERE id=?", (match_id,))
+        cursor.execute("INSERT INTO matches (status) VALUES ('active')")
+        conn.commit()
+        conn.close()
+        rebuild_state()
+        return
+
+    if action == "undo":
+        match_id = get_current_match_id()
+        conn = sqlite3.connect(DB_FILE)
+        cursor = conn.cursor()
+        cursor.execute("SELECT id FROM event_log WHERE match_id=? ORDER BY id DESC LIMIT 1", (match_id,))
+        last_event = cursor.fetchone()
+        if last_event:
+            cursor.execute("DELETE FROM event_log WHERE id=?", (last_event[0],))
+            conn.commit()
+        conn.close()
+        rebuild_state()
+        return
 
     ensure_player_stats(batter, bowler)
 
