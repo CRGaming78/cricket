@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gully Cricket Live</title>
+    <style>
+        body { font-family: 'Courier New', Courier, monospace; background-color: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
+        .container { max-width: 600px; margin: auto; }
+        select { padding: 10px; font-size: 16px; background: #21262d; color: white; border: 1px solid #30363d; border-radius: 5px; }
+        .scoreboard { background: #161b22; padding: 20px; border-radius: 10px; text-align: center; border: 1px solid #30363d; margin-bottom: 20px;}
+        .score { font-size: 48px; font-weight: bold; color: #58a6ff; margin: 10px 0; }
+        .stats { display: flex; justify-content: space-around; font-size: 18px; }
+        .admin-controls { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 20px; }
+        button { padding: 15px; font-size: 14px; font-weight: bold; cursor: pointer; border: none; border-radius: 5px; transition: 0.2s; }
+        button:active { transform: scale(0.95); }
+        .btn-run { background: #238636; color: white; }
+        .btn-noball { background: #d29922; color: #0d1117; }
+        .btn-wicket { background: #da3633; color: white; }
+        .match-log { background: #010409; padding: 15px; border-radius: 5px; height: 200px; overflow-y: auto; border: 1px solid #30363d; }
+        .log-item { border-bottom: 1px solid #21262d; padding: 5px 0; font-size: 14px;}
+        .hidden { display: none; }
+        .guest-badge { background: #1f6feb; padding: 5px 10px; border-radius: 20px; font-size: 12px; vertical-align: middle; margin-left: 10px;}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div id="loginSection" class="role-selector">
+            <span class="guest-badge">GUEST VIEW</span>
+            <div style="margin-top: 15px;">
+                <input type="password" id="adminPin" placeholder="Enter Admin PIN" style="padding: 8px; border-radius: 4px; border: 1px solid #30363d; background: #010409; color: white;">
+                <button onclick="loginAdmin()" style="background: #1f6feb; color: white; padding: 10px 15px;">Login as Admin</button>
+            </div>
+        </div>
+
+        <div id="loggedInStatus" class="hidden" style="text-align: center; margin-bottom: 20px;">
+            <span class="guest-badge" style="background: #238636;">ADMIN MODE UNLOCKED</span>
+            <button onclick="logoutAdmin()" style="padding: 5px 10px; margin-left: 10px; background: #da3633; color: white;">Logout</button>
+        </div>
+
+        <div class="scoreboard">
+            <div>TOTAL SCORE</div>
+            <div class="score"><span id="runs">0</span> / <span id="wickets">0</span></div>
+            <div class="stats">
+                <div>Overs: <span id="overs">0.0</span></div>
+                <div>Striker: <span id="striker">p1</span></div>
+            </div>
+        </div>
+
+        <div id="adminPanel" class="admin-controls hidden">
+            <button class="btn-run" onclick="sendAction('dot')">0 (Dot Ball)</button>
+            <button class="btn-run" onclick="sendAction('1_run')">1 Run</button>
+            <button class="btn-noball" onclick="sendAction('no_ball')">No Ball (1)</button>
+            <button class="btn-noball" onclick="sendAction('no_ball_hit')">No Ball + Hit (2)</button>
+            <button class="btn-noball" onclick="sendAction('2nd_bounce')">2nd Bounce (1)</button>
+            <button class="btn-wicket" onclick="sendAction('one_hand_out')">One Hand Out</button>
+            <button class="btn-wicket" onclick="sendAction('out_of_fence')">Out of Fence</button>
+            <button class="btn-wicket" onclick="sendAction('standard_out')">Standard Out</button>
+        </div>
+
+        <div>
+            <h3>Match Log</h3>
+            <div id="matchLog" class="match-log"></div>
+        </div>
+    </div>
+
+    <script>
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
+        
+        let currentPin = ""; // Stores the PIN while the admin is logged in
+
+        ws.onmessage = function(event) {
+            const state = JSON.parse(event.data);
+            
+            // Check if the server sent an error (like a wrong PIN)
+            if (state.type === "error") {
+                alert(state.message);
+                logoutAdmin(); // Force logout if PIN is wrong
+                return;
+            }
+            
+            // Update Score
+            document.getElementById('runs').innerText = state.runs;
+            document.getElementById('wickets').innerText = state.wickets;
+            
+            // Calculate Overs
+            const completedOvers = Math.floor(state.balls / 6);
+            const currentOverBalls = state.balls % 6;
+            document.getElementById('overs').innerText = `${completedOvers}.${currentOverBalls}`;
+            
+            // Update Striker
+            document.getElementById('striker').innerText = state.striker + (state.balls % 6 === 0 && state.balls > 0 ? " (End of Over)" : "*");
+
+            // Update Logs
+            const logContainer = document.getElementById('matchLog');
+            logContainer.innerHTML = '';
+            if(state.logs) {
+                state.logs.forEach(log => {
+                    const div = document.createElement('div');
+                    div.className = 'log-item';
+                    div.innerText = "> " + log;
+                    logContainer.appendChild(div);
+                });
+            }
+        };
+
+        function loginAdmin() {
+            const pinInput = document.getElementById('adminPin').value;
+            if (!pinInput) {
+                alert("Please enter a PIN");
+                return;
+            }
+            
+            currentPin = pinInput;
+            document.getElementById('loginSection').classList.add('hidden');
+            document.getElementById('loggedInStatus').classList.remove('hidden');
+            document.getElementById('adminPanel').classList.remove('hidden');
+        }
+
+        function logoutAdmin() {
+            currentPin = "";
+            document.getElementById('adminPin').value = "";
+            document.getElementById('loginSection').classList.remove('hidden');
+            document.getElementById('loggedInStatus').classList.add('hidden');
+            document.getElementById('adminPanel').classList.add('hidden');
+        }
+
+        function sendAction(actionType) {
+            // Now we send the secret PIN to the backend with every button click
+            ws.send(JSON.stringify({ action: actionType, pin: currentPin }));
+        }
+    </script>
+</body>
+</html>
