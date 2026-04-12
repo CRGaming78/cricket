@@ -7,7 +7,7 @@
     <style>
         body { font-family: 'Courier New', Courier, monospace; background-color: #0d1117; color: #c9d1d9; margin: 0; padding: 20px; }
         .container { max-width: 600px; margin: auto; }
-        select { padding: 10px; font-size: 16px; background: #21262d; color: white; border: 1px solid #30363d; border-radius: 5px; }
+        .role-selector { margin-bottom: 20px; text-align: center; }
         .scoreboard { background: #161b22; padding: 20px; border-radius: 10px; text-align: center; border: 1px solid #30363d; margin-bottom: 20px;}
         .score { font-size: 48px; font-weight: bold; color: #58a6ff; margin: 10px 0; }
         .stats { display: flex; justify-content: space-around; font-size: 18px; }
@@ -20,7 +20,7 @@
         .match-log { background: #010409; padding: 15px; border-radius: 5px; height: 200px; overflow-y: auto; border: 1px solid #30363d; }
         .log-item { border-bottom: 1px solid #21262d; padding: 5px 0; font-size: 14px;}
         .hidden { display: none; }
-        .guest-badge { background: #1f6feb; padding: 5px 10px; border-radius: 20px; font-size: 12px; vertical-align: middle; margin-left: 10px;}
+        .guest-badge { background: #1f6feb; padding: 5px 10px; border-radius: 20px; font-size: 12px; vertical-align: middle; }
     </style>
 </head>
 <body>
@@ -67,32 +67,25 @@
     <script>
         const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
         const ws = new WebSocket(`${protocol}//${window.location.host}/ws`);
-        
-        let currentPin = ""; // Stores the PIN while the admin is logged in
+        let currentPin = ""; 
 
         ws.onmessage = function(event) {
             const state = JSON.parse(event.data);
             
-            // Check if the server sent an error (like a wrong PIN)
             if (state.type === "error") {
                 alert(state.message);
-                logoutAdmin(); // Force logout if PIN is wrong
+                logoutAdmin();
                 return;
             }
             
-            // Update Score
             document.getElementById('runs').innerText = state.runs;
             document.getElementById('wickets').innerText = state.wickets;
             
-            // Calculate Overs
             const completedOvers = Math.floor(state.balls / 6);
             const currentOverBalls = state.balls % 6;
             document.getElementById('overs').innerText = `${completedOvers}.${currentOverBalls}`;
-            
-            // Update Striker
             document.getElementById('striker').innerText = state.striker + (state.balls % 6 === 0 && state.balls > 0 ? " (End of Over)" : "*");
 
-            // Update Logs
             const logContainer = document.getElementById('matchLog');
             logContainer.innerHTML = '';
             if(state.logs) {
@@ -107,11 +100,7 @@
 
         function loginAdmin() {
             const pinInput = document.getElementById('adminPin').value;
-            if (!pinInput) {
-                alert("Please enter a PIN");
-                return;
-            }
-            
+            if (!pinInput) return alert("Please enter a PIN");
             currentPin = pinInput;
             document.getElementById('loginSection').classList.add('hidden');
             document.getElementById('loggedInStatus').classList.remove('hidden');
@@ -127,7 +116,6 @@
         }
 
         function sendAction(actionType) {
-            // Now we send the secret PIN to the backend with every button click
             ws.send(JSON.stringify({ action: actionType, pin: currentPin }));
         }
     </script>
