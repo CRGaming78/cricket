@@ -164,7 +164,8 @@
                 <button onclick="sendAction('4_runs')" class="bg-btnRun hover:bg-green-700 text-white py-3 rounded-lg font-bold text-sm shadow transition transform active:scale-95">4</button>
             </div>
 
-            <div class="grid grid-cols-3 gap-2">
+            <div class="grid grid-cols-4 gap-2">
+                <button onclick="sendAction('wide')" class="bg-btnNoball hover:bg-yellow-600 text-darkBg py-2 rounded-lg font-bold text-xs shadow transition transform active:scale-95">WD (1)</button>
                 <button onclick="sendAction('no_ball')" class="bg-btnNoball hover:bg-yellow-600 text-darkBg py-2 rounded-lg font-bold text-xs shadow transition transform active:scale-95">NB (1)</button>
                 <button onclick="sendAction('no_ball_hit')" class="bg-btnNoball hover:bg-yellow-600 text-darkBg py-2 rounded-lg font-bold text-xs shadow transition transform active:scale-95">NB+Hit (2)</button>
                 <button onclick="sendAction('2nd_bounce')" class="bg-btnNoball hover:bg-yellow-600 text-darkBg py-2 rounded-lg font-bold text-xs shadow transition transform active:scale-95">2nd Bounce</button>
@@ -229,6 +230,19 @@
             return `${Math.floor(balls / 6)}.${balls % 6}`;
         }
 
+        // Helper to sanitize HTML to prevent XSS
+        function escapeHTML(str) {
+            return str.replace(/[&<>'"]/g,
+                tag => ({
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    "'": '&#39;',
+                    '"': '&quot;'
+                }[tag])
+            );
+        }
+
         // Helper to play sounds safely
         function playSound(type) {
             try {
@@ -264,6 +278,22 @@
         ws.onmessage = function(event) {
             const state = JSON.parse(event.data);
             
+            if (state.type === "error") {
+                alert(state.message);
+                // If login fails or we lose lock, revert to guest view
+                if (state.message.includes("Admin") || state.message.includes("PIN")) {
+                    logoutAdmin(true);
+                }
+                return;
+            }
+            if (state.type === "success") {
+                // Successful login
+                document.getElementById('loginSection').classList.add('hidden');
+                document.getElementById('loggedInStatus').classList.remove('hidden');
+                document.getElementById('adminPanel').classList.remove('hidden');
+                return;
+            }
+
             // Animations Logic
             const scoreText = document.getElementById('scoreText');
             scoreText.classList.remove('anim-pop', 'anim-shake');
@@ -280,12 +310,6 @@
             lastRuns = state.runs;
             lastWickets = state.wickets;
 
-            if (state.type === "error") {
-                alert(state.message);
-                logoutAdmin();
-                return;
-            }
-            
             // Main Score
             document.getElementById('runs').innerText = state.runs;
             document.getElementById('wickets').innerText = state.wickets;
@@ -340,7 +364,7 @@
 
                 battersList.innerHTML += `
                     <div class="flex justify-between ${styleClass}">
-                        <div class="w-1/2">${bName}${activeStar}</div>
+                        <div class="w-1/2">${escapeHTML(bName)}${activeStar}</div>
                         <div class="w-1/6 text-right">${s.runs}</div>
                         <div class="w-1/6 text-right">${s.balls}</div>
                         <div class="w-1/6 text-right text-gray-500">${s.fours}</div>
@@ -357,7 +381,7 @@
 
                 bowlersList.innerHTML += `
                     <div class="flex justify-between ${styleClass}">
-                        <div class="w-1/2">${bName}${activeStar}</div>
+                        <div class="w-1/2">${escapeHTML(bName)}${activeStar}</div>
                         <div class="w-1/6 text-right">${formatOvers(s.balls)}</div>
                         <div class="w-1/6 text-right">${s.runs}</div>
                         <div class="w-1/6 text-right">${s.wickets}</div>
@@ -381,7 +405,7 @@
                     else if (log.includes("dot")) icon = '<i class="fas fa-circle text-gray-500 mt-1 mr-2 text-[8px]"></i>';
                     else if (log.includes("1 run")) icon = '<i class="fas fa-check-circle text-green-500 mt-1 mr-2 text-xs"></i>';
 
-                    div.innerHTML = `${icon} <span class="flex-1">${log}</span>`;
+                    div.innerHTML = `${icon} <span class="flex-1">${escapeHTML(log)}</span>`;
                     logContainer.appendChild(div);
                 });
             }
@@ -391,12 +415,15 @@
             const pinInput = document.getElementById('adminPin').value;
             if (!pinInput) return alert("Please enter a PIN");
             currentPin = pinInput;
-            document.getElementById('loginSection').classList.add('hidden');
-            document.getElementById('loggedInStatus').classList.remove('hidden');
-            document.getElementById('adminPanel').classList.remove('hidden');
+            // Send login request to claim lock.
+            // UI will update on 'success' message from server.
+            sendAction('login');
         }
 
-        function logoutAdmin() {
+        function logoutAdmin(isForced = false) {
+            if (!isForced) {
+                sendAction('logout');
+            }
             currentPin = "";
             document.getElementById('adminPin').value = "";
             document.getElementById('loginSection').classList.remove('hidden');
@@ -477,7 +504,7 @@
                     const rank = i === 0 ? '<i class="fas fa-medal text-yellow-500 mr-2"></i>' : (i === 1 ? '<i class="fas fa-medal text-gray-300 mr-2"></i>' : (i === 2 ? '<i class="fas fa-medal text-yellow-700 mr-2"></i>' : `<span class="w-5 inline-block text-gray-600">${i+1}.</span>`));
                     batList.innerHTML += `
                         <div class="flex justify-between items-center py-1 border-b border-gray-800 last:border-0">
-                            <div class="font-bold text-gray-300">${rank}${b[0]}</div>
+                            <div class="font-bold text-gray-300">${rank}${escapeHTML(b[0])}</div>
                             <div class="text-right">
                                 <span class="text-white font-bold inline-block w-8">${b[1].runs}</span><span class="text-[10px] text-gray-500 ml-1">R</span>
                                 <span class="text-gray-400 text-xs inline-block w-6 ml-2">(${b[1].balls}b)</span>
@@ -500,7 +527,7 @@
                     const rank = i === 0 ? '<i class="fas fa-medal text-yellow-500 mr-2"></i>' : (i === 1 ? '<i class="fas fa-medal text-gray-300 mr-2"></i>' : (i === 2 ? '<i class="fas fa-medal text-yellow-700 mr-2"></i>' : `<span class="w-5 inline-block text-gray-600">${i+1}.</span>`));
                     bowlList.innerHTML += `
                         <div class="flex justify-between items-center py-1 border-b border-gray-800 last:border-0">
-                            <div class="font-bold text-gray-300">${rank}${b[0]}</div>
+                            <div class="font-bold text-gray-300">${rank}${escapeHTML(b[0])}</div>
                             <div class="text-right">
                                 <span class="text-white font-bold inline-block w-6">${b[1].wickets}</span><span class="text-[10px] text-gray-500 ml-1">W</span>
                                 <span class="text-gray-400 text-xs inline-block w-8 ml-2">(${formatOvers(b[1].balls)}o, ${b[1].runs}r)</span>

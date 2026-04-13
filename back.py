@@ -93,6 +93,7 @@ def ensure_player_stats(batter, bowler):
 class ConnectionManager:
     def __init__(self):
         self.active_connections: List[WebSocket] = []
+        self.admin_connection: WebSocket = None
 
     async def connect(self, websocket: WebSocket):
         await websocket.accept()
@@ -100,11 +101,17 @@ class ConnectionManager:
         await websocket.send_json(game_state)
 
     def disconnect(self, websocket: WebSocket):
-        self.active_connections.remove(websocket)
+        if websocket in self.active_connections:
+            self.active_connections.remove(websocket)
+        if self.admin_connection == websocket:
+            self.admin_connection = None
 
     async def broadcast_state(self):
         for connection in self.active_connections:
-            await connection.send_json(game_state)
+            try:
+                await connection.send_json(game_state)
+            except Exception:
+                pass
 
 manager = ConnectionManager()
 
@@ -149,6 +156,9 @@ def build_state_for_match(match_id):
                 state["batter_stats"][evt_batter]["fours"] += 1
             state["bowler_stats"][evt_bowler]["runs"] += runs
             state["bowler_stats"][evt_bowler]["balls"] += 1
+        elif evt_type == "wide":
+            state["runs"] += 1
+            state["bowler_stats"][evt_bowler]["runs"] += 1
         elif evt_type == "no_ball":
             state["runs"] += 1
             state["bowler_stats"][evt_bowler]["runs"] += 1
@@ -277,6 +287,10 @@ def process_action(action_data):
         game_state["bowler_stats"][bowler]["runs"] += 4
         game_state["bowler_stats"][bowler]["balls"] += 1
         log_event_to_db("run", 4, True, batter, bowler, f"{batter} hit a 4!")
+    elif action == "wide":
+        game_state["runs"] += 1
+        game_state["bowler_stats"][bowler]["runs"] += 1
+        log_event_to_db("wide", 1, False, batter, bowler, "Wide Ball! 1 Run added.")
     elif action == "no_ball":
         game_state["runs"] += 1
         game_state["bowler_stats"][bowler]["runs"] += 1
@@ -372,8 +386,29 @@ async def websocket_endpoint(websocket: WebSocket):
             data = await websocket.receive_text()
             action_data = json.loads(data)
             
+            action = action_data.get("action")
+
             if action_data.get("pin") != ADMIN_PIN:
                 await websocket.send_json({"type": "error", "message": "Unauthorized: Wrong PIN"})
+                continue
+
+            # Concurrency control
+            if action == "login":
+                if manager.admin_connection and manager.admin_connection != websocket:
+                    await websocket.send_json({"type": "error", "message": "Another Admin is already logged in."})
+                else:
+                    manager.admin_connection = websocket
+                    await websocket.send_json({"type": "success", "message": "Admin logged in successfully."})
+                continue
+
+            if action == "logout":
+                if manager.admin_connection == websocket:
+                    manager.admin_connection = None
+                continue
+
+            # Only allow the active admin to send game actions
+            if manager.admin_connection != websocket:
+                await websocket.send_json({"type": "error", "message": "You do not have the Admin lock. Please login again."})
                 continue
                 
             process_action(action_data)
