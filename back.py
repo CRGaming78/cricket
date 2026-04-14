@@ -48,6 +48,23 @@ def init_db():
         )
     ''')
 
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS players (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT UNIQUE
+        )
+    ''')
+
+    # Pre-populate default players if table is empty
+    cursor.execute("SELECT count(*) FROM players")
+    if cursor.fetchone()[0] == 0:
+        default_players = [
+            "Abhishek", "Rishu", "Shubham", "Shikher", "Bisheshwar",
+            "Dev", "Kanishk", "Navin Bhaiya", "Abhijit", "Gurv",
+            "Shivansh", "Kshitij", "Ayush"
+        ]
+        cursor.executemany("INSERT INTO players (name) VALUES (?)", [(p,) for p in default_players])
+
     # Create an initial match if none exists
     cursor.execute("SELECT id FROM matches WHERE status='active' ORDER BY id DESC LIMIT 1")
     if not cursor.fetchone():
@@ -74,6 +91,7 @@ def get_default_state():
         "bowler": "b1",
         "next_player_index": 2,
         "logs": [],
+        "timeline": [[]],  # List of overs, where each over is a list of balls (e.g. ['0', '1', 'W'])
         "batter_stats": {
             "p1": {"runs": 0, "balls": 0, "fours": 0}
         },
@@ -141,12 +159,18 @@ def build_state_for_match(match_id):
             stats = state["batter_stats"].pop(current_striker, {"runs": 0, "balls": 0, "fours": 0})
             state["batter_stats"][evt_batter] = stats
             state["striker"] = evt_batter
+        elif evt_type == "rename_bowler":
+            current_bowler = state["bowler"]
+            stats = state["bowler_stats"].pop(current_bowler, {"balls": 0, "runs": 0, "wickets": 0})
+            state["bowler_stats"][evt_bowler] = stats
+            state["bowler"] = evt_bowler
         elif evt_type == "change_bowler":
             state["bowler"] = evt_bowler
         elif evt_type == "dot":
             state["balls"] += 1
             state["batter_stats"][evt_batter]["balls"] += 1
             state["bowler_stats"][evt_bowler]["balls"] += 1
+            state["timeline"][-1].append('0')
         elif evt_type == "run":
             state["runs"] += runs
             state["balls"] += 1
@@ -156,35 +180,50 @@ def build_state_for_match(match_id):
                 state["batter_stats"][evt_batter]["fours"] += 1
             state["bowler_stats"][evt_bowler]["runs"] += runs
             state["bowler_stats"][evt_bowler]["balls"] += 1
+            state["timeline"][-1].append(str(runs))
         elif evt_type == "wide":
             state["runs"] += 1
             state["bowler_stats"][evt_bowler]["runs"] += 1
+            state["timeline"][-1].append('WD')
         elif evt_type == "no_ball":
             state["runs"] += 1
             state["bowler_stats"][evt_bowler]["runs"] += 1
+            state["timeline"][-1].append('NB')
         elif evt_type == "no_ball_hit":
             state["runs"] += 2
             state["batter_stats"][evt_batter]["runs"] += 1
             state["bowler_stats"][evt_bowler]["runs"] += 2
+            state["timeline"][-1].append('NB+1')
         elif evt_type == "2nd_bounce":
             state["runs"] += 1
             state["bowler_stats"][evt_bowler]["runs"] += 1
+            state["timeline"][-1].append('2B')
         elif evt_type == "wicket":
             state["wickets"] += 1
             state["balls"] += 1
             state["batter_stats"][evt_batter]["balls"] += 1
             state["bowler_stats"][evt_bowler]["balls"] += 1
             state["bowler_stats"][evt_bowler]["wickets"] += 1
+            state["timeline"][-1].append('W')
             next_player = f"p{state['next_player_index']}"
             state["striker"] = next_player
             state["next_player_index"] += 1
             if next_player not in state["batter_stats"]:
                 state["batter_stats"][next_player] = {"runs": 0, "balls": 0, "fours": 0}
 
+        # Timeline logic for new overs
+        if evt_type in ["dot", "run", "wicket"] and state["balls"] > 0 and state["balls"] % 6 == 0:
+            # We don't want to add a new empty over array if the match just ended, but it's safe to always append
+            state["timeline"].append([])
+
         # Logs handling (keep last 10)
         state["logs"].insert(0, desc)
         if len(state["logs"]) > 10:
             state["logs"].pop()
+
+    # Cleanup trailing empty over
+    if len(state["timeline"]) > 1 and len(state["timeline"][-1]) == 0:
+        state["timeline"].pop()
 
     return state
 
@@ -257,12 +296,34 @@ def process_action(action_data):
             log_event_to_db("rename_batter", 0, False, new_name, bowler, f"Batter renamed to {new_name}.")
         return
 
+    if action == "rename_bowler":
+        new_name = action_data.get("new_name")
+        if new_name:
+            stats = game_state["bowler_stats"].pop(bowler, {"balls": 0, "runs": 0, "wickets": 0})
+            game_state["bowler_stats"][new_name] = stats
+            game_state["bowler"] = new_name
+            log_event_to_db("rename_bowler", 0, False, batter, new_name, f"Bowler renamed to {new_name}.")
+        return
+
     if action == "change_bowler":
         new_name = action_data.get("new_name")
         if new_name:
             game_state["bowler"] = new_name
             ensure_player_stats(batter, new_name)
             log_event_to_db("change_bowler", 0, False, batter, new_name, f"Bowler changed to {new_name}.")
+        return
+
+    if action == "add_player":
+        new_name = action_data.get("new_name")
+        if new_name:
+            try:
+                conn = sqlite3.connect(DB_FILE)
+                cursor = conn.cursor()
+                cursor.execute("INSERT INTO players (name) VALUES (?)", (new_name,))
+                conn.commit()
+                conn.close()
+            except sqlite3.IntegrityError:
+                pass # Player already exists
         return
     
     if action == "dot":
@@ -326,6 +387,15 @@ def process_action(action_data):
 async def get():
     with open("index.html", "r") as f:
         return HTMLResponse(f.read())
+
+@app.get("/api/players")
+async def get_players():
+    conn = sqlite3.connect(DB_FILE)
+    cursor = conn.cursor()
+    cursor.execute("SELECT name FROM players ORDER BY name")
+    players = [row[0] for row in cursor.fetchall()]
+    conn.close()
+    return {"players": players}
 
 @app.get("/api/stats")
 async def get_stats():

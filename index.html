@@ -145,15 +145,30 @@
             <div class="bg-[#010409] border border-borderCol rounded-lg p-3 space-y-3">
                 <div class="flex space-x-2">
                     <input type="number" id="newTargetScore" placeholder="Set Target Score" class="bg-cardBg border border-borderCol rounded px-2 py-1 text-sm flex-1 focus:outline-none focus:border-yellow-500 text-yellow-500">
-                    <button onclick="setTarget()" class="bg-yellow-700 hover:bg-yellow-600 px-3 py-1 rounded text-sm transition-colors font-bold text-white"><i class="fas fa-bullseye"></i></button>
+                    <button onclick="setTarget()" class="bg-yellow-700 hover:bg-yellow-600 px-3 py-1 rounded text-sm transition-colors font-bold text-white" title="Set Target"><i class="fas fa-bullseye"></i></button>
                 </div>
-                <div class="flex space-x-2">
-                    <input type="text" id="newBatterName" placeholder="Rename Batter" class="bg-cardBg border border-borderCol rounded px-2 py-1 text-sm flex-1 focus:outline-none focus:border-blue-500">
-                    <button onclick="renameBatter()" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm transition-colors"><i class="fas fa-edit"></i></button>
+
+                <!-- Batting Controls -->
+                <div class="flex space-x-2 items-center border-t border-borderCol pt-3">
+                    <select id="batterSelect" class="bg-cardBg border border-borderCol rounded px-2 py-1 text-sm flex-1 focus:outline-none focus:border-blue-500 text-white">
+                        <option value="">Select Roster Batter...</option>
+                    </select>
+                    <button onclick="renameBatter()" class="bg-blue-800 hover:bg-blue-700 px-3 py-1 rounded text-sm transition-colors font-bold text-white whitespace-nowrap" title="Update Batter"><i class="fas fa-edit mr-1"></i>Bat</button>
                 </div>
-                <div class="flex space-x-2">
-                    <input type="text" id="newBowlerName" placeholder="Change Bowler" class="bg-cardBg border border-borderCol rounded px-2 py-1 text-sm flex-1 focus:outline-none focus:border-blue-500">
-                    <button onclick="changeBowler()" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm transition-colors"><i class="fas fa-exchange-alt"></i></button>
+
+                <!-- Bowling Controls -->
+                <div class="flex space-x-2 items-center">
+                    <select id="bowlerSelect" class="bg-cardBg border border-borderCol rounded px-2 py-1 text-sm flex-1 focus:outline-none focus:border-blue-500 text-white">
+                        <option value="">Select Roster Bowler...</option>
+                    </select>
+                    <button onclick="changeBowler()" class="bg-green-800 hover:bg-green-700 px-3 py-1 rounded text-sm transition-colors font-bold text-white whitespace-nowrap" title="New Bowler Spell"><i class="fas fa-exchange-alt mr-1"></i>Bowl</button>
+                    <button onclick="renameBowler()" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm transition-colors font-bold text-white whitespace-nowrap" title="Fix Bowler Typo (Rename)"><i class="fas fa-wrench"></i></button>
+                </div>
+
+                <!-- Add Roster -->
+                <div class="flex space-x-2 items-center border-t border-borderCol pt-3">
+                    <input type="text" id="newPlayerName" placeholder="Add Custom Player..." class="bg-cardBg border border-borderCol rounded px-2 py-1 text-sm flex-1 focus:outline-none focus:border-blue-500">
+                    <button onclick="addPlayer()" class="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded text-sm transition-colors font-bold text-white"><i class="fas fa-user-plus"></i></button>
                 </div>
             </div>
 
@@ -178,9 +193,18 @@
             </div>
         </div>
 
-            <!-- Match Log -->
-            <div class="bg-[#010409] border border-borderCol rounded-lg p-4">
-                <h3 class="text-gray-400 text-sm font-semibold mb-3 border-b border-borderCol pb-2"><i class="fas fa-list-ul mr-2"></i>Match Log</h3>
+            <!-- Timeline & Match Log -->
+            <div class="bg-[#010409] border border-borderCol rounded-lg p-4 flex flex-col h-full">
+                <!-- Horizontal Ball-by-ball Timeline -->
+                <div class="mb-4">
+                    <h3 class="text-gray-400 text-sm font-semibold mb-2 border-b border-borderCol pb-2"><i class="fas fa-chart-line mr-2"></i>Over Timeline</h3>
+                    <div id="overTimeline" class="flex overflow-x-auto no-scrollbar space-x-3 py-2 items-center min-h-[48px]">
+                        <!-- Timeline injected here -->
+                        <div class="text-xs text-gray-500 italic">Waiting for first ball...</div>
+                    </div>
+                </div>
+
+                <h3 class="text-gray-400 text-sm font-semibold mb-3 border-t border-borderCol pt-3"><i class="fas fa-list-ul mr-2"></i>Match Log</h3>
                 <div id="matchLog" class="h-48 overflow-y-auto no-scrollbar space-y-2 text-sm">
                     <!-- Logs will be injected here -->
                 </div>
@@ -389,6 +413,43 @@
                 `;
             }
 
+            // Timeline
+            const timelineContainer = document.getElementById('overTimeline');
+            if (state.timeline && state.timeline.length > 0 && state.timeline[0].length > 0) {
+                timelineContainer.innerHTML = '';
+                state.timeline.forEach((over, idx) => {
+                    // Over wrapper
+                    const overDiv = document.createElement('div');
+                    overDiv.className = 'flex items-center space-x-1 shrink-0 border-r border-gray-800 pr-3 last:border-0 last:pr-0';
+
+                    // Over label
+                    const label = document.createElement('div');
+                    label.className = 'text-[10px] text-gray-500 mr-1 uppercase tracking-wider font-bold';
+                    label.innerText = `Ov ${idx+1}`;
+                    overDiv.appendChild(label);
+
+                    // Balls in over
+                    over.forEach(ball => {
+                        const ballSpan = document.createElement('span');
+                        let colorClass = 'bg-gray-700 text-gray-300';
+                        if (ball === 'W') colorClass = 'bg-red-600 text-white font-bold';
+                        else if (ball === '4') colorClass = 'bg-green-600 text-white font-bold';
+                        else if (ball === 'WD' || ball.includes('NB') || ball === '2B') colorClass = 'bg-yellow-600 text-darkBg font-bold';
+                        else if (ball === '0') colorClass = 'bg-gray-800 text-gray-500';
+
+                        ballSpan.className = `flex items-center justify-center w-6 h-6 rounded-full text-[10px] ${colorClass}`;
+                        ballSpan.innerText = ball;
+                        overDiv.appendChild(ballSpan);
+                    });
+
+                    timelineContainer.appendChild(overDiv);
+                });
+                // Auto scroll to the end
+                timelineContainer.scrollLeft = timelineContainer.scrollWidth;
+            } else {
+                timelineContainer.innerHTML = '<div class="text-xs text-gray-500 italic">Waiting for first ball...</div>';
+            }
+
             // Match Log
             const logContainer = document.getElementById('matchLog');
             logContainer.innerHTML = '';
@@ -401,7 +462,7 @@
                     let icon = '<i class="fas fa-circle text-gray-600 mt-1 mr-2 text-[8px]"></i>';
                     if (log.includes("OUT")) icon = '<i class="fas fa-times-circle text-red-500 mt-1 mr-2 text-xs"></i>';
                     else if (log.includes("4!")) icon = '<i class="fas fa-star text-yellow-400 mt-1 mr-2 text-xs"></i>';
-                    else if (log.includes("No Ball")) icon = '<i class="fas fa-exclamation-circle text-yellow-600 mt-1 mr-2 text-xs"></i>';
+                    else if (log.includes("No Ball") || log.includes("Wide")) icon = '<i class="fas fa-exclamation-circle text-yellow-600 mt-1 mr-2 text-xs"></i>';
                     else if (log.includes("dot")) icon = '<i class="fas fa-circle text-gray-500 mt-1 mr-2 text-[8px]"></i>';
                     else if (log.includes("1 run")) icon = '<i class="fas fa-check-circle text-green-500 mt-1 mr-2 text-xs"></i>';
 
@@ -440,6 +501,29 @@
         function sendAction(actionType) {
             ws.send(JSON.stringify({ action: actionType, pin: currentPin }));
         }
+
+        async function fetchPlayers() {
+            try {
+                const res = await fetch('/api/players');
+                const data = await res.json();
+
+                const batSelect = document.getElementById('batterSelect');
+                const bowlSelect = document.getElementById('bowlerSelect');
+
+                batSelect.innerHTML = '<option value="">Select Roster Batter...</option>';
+                bowlSelect.innerHTML = '<option value="">Select Roster Bowler...</option>';
+
+                data.players.forEach(p => {
+                    batSelect.innerHTML += `<option value="${escapeHTML(p)}">${escapeHTML(p)}</option>`;
+                    bowlSelect.innerHTML += `<option value="${escapeHTML(p)}">${escapeHTML(p)}</option>`;
+                });
+            } catch (e) {
+                console.error("Error fetching players:", e);
+            }
+        }
+
+        // Fetch on initial load
+        fetchPlayers();
 
         function setTarget() {
             const targetVal = parseInt(document.getElementById('newTargetScore').value);
@@ -541,18 +625,38 @@
         }
 
         function renameBatter() {
-            const newName = document.getElementById('newBatterName').value.trim();
+            const newName = document.getElementById('batterSelect').value;
             if(newName) {
                 ws.send(JSON.stringify({ action: 'rename_batter', new_name: newName, pin: currentPin }));
-                document.getElementById('newBatterName').value = "";
+                document.getElementById('batterSelect').value = "";
             }
         }
 
         function changeBowler() {
-            const newName = document.getElementById('newBowlerName').value.trim();
+            const newName = document.getElementById('bowlerSelect').value;
             if(newName) {
                 ws.send(JSON.stringify({ action: 'change_bowler', new_name: newName, pin: currentPin }));
-                document.getElementById('newBowlerName').value = "";
+                document.getElementById('bowlerSelect').value = "";
+            }
+        }
+
+        function renameBowler() {
+            const newName = document.getElementById('bowlerSelect').value;
+            if(newName) {
+                if(confirm(`Are you sure you want to RENAME the current bowler to ${newName}? This will NOT start a new spell.`)) {
+                    ws.send(JSON.stringify({ action: 'rename_bowler', new_name: newName, pin: currentPin }));
+                    document.getElementById('bowlerSelect').value = "";
+                }
+            }
+        }
+
+        function addPlayer() {
+            const newName = document.getElementById('newPlayerName').value.trim();
+            if(newName) {
+                ws.send(JSON.stringify({ action: 'add_player', new_name: newName, pin: currentPin }));
+                document.getElementById('newPlayerName').value = "";
+                // Refresh dropdowns after a short delay to allow DB insert
+                setTimeout(fetchPlayers, 500);
             }
         }
     </script>
